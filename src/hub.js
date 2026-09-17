@@ -122,6 +122,20 @@ class Hub {
     }
   }
 
+  /** 持久退群：把某用户的所有连接（多端）都移出房间广播集 */
+  leaveRoomForUser(userId, roomId) {
+    const mine = this.byUser.get(userId);
+    if (!mine) return 0;
+    let n = 0;
+    for (const conn of [...mine]) {
+      if (conn.rooms.has(roomId)) {
+        this.leaveRoom(conn, roomId);
+        n++;
+      }
+    }
+    return n;
+  }
+
   _leaveRoomSet(roomId, conn) {
     const set = this.byRoom.get(roomId);
     if (set) {
@@ -139,7 +153,10 @@ class Hub {
 
   /**
    * 发送单帧到指定连接。track=true 时登记未 ACK 追踪（用于 msg 类帧）。
-   * 背压：未确认积压超过上限时断开连接（客户端重连后走 sync 补发）。
+   * 背压两道防线：
+   *  - 未确认积压超上限 或 ws 发送缓冲超硬水位 → close(1013)，客户端重连走 sync 补发；
+   *  - ws 发送缓冲超软水位时，tracked 帧「先登记、本次不 write」，
+   *    track 与 write 解耦 —— 由 resendSweep 在缓冲回落后续发，避免内存膨胀。
    */
   send(conn, frame, { track = false, roomId = null, seq = null } = {}) {
     if (conn.ws.readyState !== 1 /* OPEN */) return false;
@@ -147,13 +164,19 @@ class Hub {
       conn.ws.close(1013, 'backpressure: too many unacked messages');
       return false;
     }
+    if ((conn.ws.bufferedAmount || 0) > this.config.wsBufferedHard) {
+      conn.ws.close(1013, 'backpressure: send buffer too large');
+      return false;
+    }
     const str = typeof frame === 'string' ? frame : JSON.stringify(frame);
+    if (track && roomId != null && seq != null) conn.trackUnacked(roomId, seq, str);
+    // 软水位：tracked 帧暂缓写出（已登记，resendSweep 会补发）；控制帧照常发
+    if (track && (conn.ws.bufferedAmount || 0) > this.config.wsBufferedSoft) return false;
     try {
       conn.ws.send(str);
     } catch {
       return false;
     }
-    if (track && roomId != null && seq != null) conn.trackUnacked(roomId, seq, str);
     return true;
   }
 
@@ -187,18 +210,25 @@ class Hub {
   resendSweep() {
     const { ackResendAfterMs, ackMaxResend } = this.config;
     for (const conn of this.all) {
+      if (conn.ws.readyState !== 1) continue;
+      // 硬水位：已无救，断开走重连 sync
+      if ((conn.ws.bufferedAmount || 0) > this.config.wsBufferedHard) {
+        conn.ws.close(1013, 'backpressure: send buffer too large');
+        continue;
+      }
+      const buffered = (conn.ws.bufferedAmount || 0) > this.config.wsBufferedSoft;
       for (const entry of conn.pendingResends(ackResendAfterMs)) {
+        // 软水位未回落：暂缓补发（不累计 tries），等下一轮，避免缓冲继续膨胀
+        if (buffered) continue;
         entry.tries++;
         if (entry.tries > ackMaxResend) {
           conn.ws.close(1011, 'ack timeout');
           break;
         }
-        if (conn.ws.readyState === 1) {
-          try {
-            conn.ws.send(entry.frame);
-            entry.lastSent = now();
-          } catch { /* 下一轮再处理 */ }
-        }
+        try {
+          conn.ws.send(entry.frame);
+          entry.lastSent = now();
+        } catch { /* 下一轮再处理 */ }
       }
     }
   }

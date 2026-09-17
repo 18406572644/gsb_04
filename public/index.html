@@ -12,22 +12,53 @@
   header h1 { font-size: 16px; margin-right: auto; }
   #status { width: 10px; height: 10px; border-radius: 50%; background: #666; }
   #status.on { background: #3ecf6e; } #status.off { background: #e05252; }
-  input, button { font: inherit; padding: 7px 10px; border-radius: 6px; border: 1px solid #2a3550;
+  input, button, a.btn { font: inherit; padding: 7px 10px; border-radius: 6px; border: 1px solid #2a3550;
                   background: #1c2539; color: inherit; }
-  button { cursor: pointer; background: #2f6fed; border-color: #2f6fed; color: #fff; }
+  button, a.btn { cursor: pointer; background: #2f6fed; border-color: #2f6fed; color: #fff; }
   button:disabled { opacity: .5; cursor: default; }
+  button.ghost { background: #1c2539; border-color: #2a3550; color: inherit; }
+  button.rec { background: #e05252; border-color: #e05252; }
   main { flex: 1; display: flex; min-height: 0; }
   #sidebar { width: 220px; background: #161d2e; padding: 12px; display: flex; flex-direction: column; gap: 8px; }
   #sidebar .room { padding: 8px 10px; border-radius: 6px; cursor: pointer; display: flex; justify-content: space-between; }
   #sidebar .room.active, #sidebar .room:hover { background: #24304d; }
   #sidebar .badge { color: #7f8db3; font-size: 12px; }
   #chat { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+  #chatHead { display: flex; align-items: center; gap: 10px; padding: 8px 16px; background: #161d2e;
+              border-bottom: 1px solid #202a42; }
+  #chatHead b { margin-right: auto; }
   #messages { flex: 1; overflow-y: auto; padding: 16px; display: flex; flex-direction: column; gap: 6px; }
+  #messages.dragover { outline: 2px dashed #2f6fed; outline-offset: -8px; }
   .msg { max-width: 70%; padding: 8px 12px; border-radius: 10px; background: #1c2539; align-self: flex-start; }
   .msg.mine { background: #2f6fed; align-self: flex-end; }
-  .msg .meta { font-size: 11px; opacity: .65; margin-bottom: 2px; }
+  .msg .meta { font-size: 11px; opacity: .65; margin-bottom: 2px; display: flex; gap: 6px; align-items: center; }
   .msg .tick { font-size: 11px; opacity: .7; }
+  .msg .acts { margin-left: auto; display: none; gap: 4px; }
+  .msg:hover .acts { display: flex; }
+  .msg .acts button { padding: 0 6px; font-size: 11px; background: transparent; border: none; color: inherit; opacity: .8; }
+  .msg.failed { outline: 1px solid #e05252; }
   .sys { align-self: center; font-size: 12px; color: #7f8db3; }
+  .quote { border-left: 3px solid #7f8db3; padding: 2px 8px; margin-bottom: 4px; font-size: 12px;
+           opacity: .85; max-width: 320px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .thumb { max-width: 260px; max-height: 200px; border-radius: 6px; display: block; cursor: pointer; }
+  .filecard { display: flex; align-items: center; gap: 8px; color: inherit; text-decoration: none;
+              background: rgba(0,0,0,.18); padding: 8px 10px; border-radius: 6px; }
+  .filecard .ico { font-size: 20px; }
+  .filecard .sz { font-size: 11px; opacity: .7; }
+  .voicecard audio { height: 34px; max-width: 240px; }
+  .voicecard .dur { font-size: 11px; opacity: .7; }
+  .dead { font-size: 12px; opacity: .75; font-style: italic; }
+  #quoteBar { display: none; align-items: center; gap: 8px; padding: 6px 16px; background: #1b2440;
+              border-top: 1px solid #202a42; font-size: 12px; }
+  #quoteBar.on { display: flex; }
+  #quoteBar span { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  #attachChip { display: none; align-items: center; gap: 10px; padding: 6px 16px; background: #1b2440;
+                border-top: 1px solid #202a42; font-size: 12px; }
+  #attachChip.on { display: flex; }
+  #attachChip .info { flex: 1; min-width: 0; }
+  #attachChip .name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .pbar { height: 4px; background: #2a3550; border-radius: 2px; margin-top: 3px; }
+  .pbar > i { display: block; height: 100%; width: 0; background: #3ecf6e; border-radius: 2px; }
   #composer { display: flex; gap: 8px; padding: 12px 16px; background: #161d2e; }
   #composer input { flex: 1; }
   #members { width: 200px; background: #161d2e; padding: 12px; overflow-y: auto; }
@@ -37,6 +68,10 @@
   #members .tag { font-size: 11px; color: #f0b429; }
   #members .tag.muted { color: #e05252; }
   #members button { padding: 2px 6px; font-size: 11px; margin-left: auto; }
+  #overlay { position: fixed; inset: 0; background: rgba(0,0,0,.8); display: none;
+             align-items: center; justify-content: center; z-index: 10; cursor: zoom-out; }
+  #overlay.on { display: flex; }
+  #overlay img { max-width: 92vw; max-height: 92vh; }
   .hidden { display: none !important; }
 </style>
 </head>
@@ -58,15 +93,34 @@
         <input id="roomInput" placeholder="房间名" maxlength="64" style="flex:1;min-width:0">
         <button type="submit">建</button>
       </form>
-      <button id="joinBtn">加入房间</button>
+      <button id="joinBtn" class="ghost">加入房间</button>
       <div id="roomList"></div>
     </div>
   </div>
 
   <div id="chat">
+    <div id="chatHead" class="hidden">
+      <b id="roomTitle"></b>
+      <button id="leaveRoomBtn" class="ghost" type="button">退出房间</button>
+    </div>
     <div id="messages"></div>
+    <div id="quoteBar"><span id="quoteText"></span><button id="quoteCancel" class="ghost" type="button">✕</button></div>
+    <div id="attachChip">
+      <span id="attachIcon">📎</span>
+      <div class="info">
+        <div class="name" id="attachName"></div>
+        <div class="pbar"><i id="attachBar"></i></div>
+      </div>
+      <button id="attachToggle" class="ghost" type="button">暂停</button>
+      <button id="attachCancel" class="ghost" type="button">取消</button>
+    </div>
     <form id="composer" class="hidden">
-      <input id="msgInput" placeholder="发送消息…" autocomplete="off">
+      <button type="button" id="fileBtn" class="ghost" title="发送文件">📎</button>
+      <button type="button" id="imageBtn" class="ghost" title="发送图片">🖼️</button>
+      <button type="button" id="voiceBtn" class="ghost" title="按住说话">🎤</button>
+      <input type="file" id="fileInput" class="hidden">
+      <input type="file" id="imageInput" accept="image/*" class="hidden">
+      <input id="msgInput" placeholder="发送消息…（可直接粘贴/拖入图片）" autocomplete="off">
       <button type="submit">发送</button>
     </form>
   </div>
@@ -74,19 +128,19 @@
   <div id="members" class="hidden"></div>
 </main>
 
+<div id="overlay"><img id="overlayImg" alt=""></div>
+
 <script>
 'use strict';
-/* 可靠投递客户端协议实现：
- * - 发送：每条消息带唯一 clientMsgId，未收到 ACK 定时重发（服务端幂等去重）；
- * - 接收：按房间记录 lastSeenSeq，seq 小于等于它的一律丢弃（幂等消费）；
- * - ACK：累积确认，500ms 批量上报；
- * - 断线补发：重连后重新 join 并携带 lastSeenSeq，服务端回放缺口；
- * - lastSeenSeq 存 localStorage，刷新页面也不丢进度。
- */
+/* 协议与可靠投递：clientMsgId 幂等发送、seq 幂等消费、500ms 批量 ACK、
+ * 断线按 lastSeq 补发；富媒体走「HTTP 分片上传 → WS 元数据消息」两阶段，
+ * 大文件不经过 WebSocket；下载凭 asset_ticket 短时票走 HTTP Range。 */
 const $ = (id) => document.getElementById(id);
 let ws = null, me = null, currentRoom = null;
-const rooms = new Map(); // roomId -> {name, role, mutedUntil, lastSeenSeq, msgs:[], pending:Map}
+const rooms = new Map();
 let reconnectDelay = 500, ackTimer = null, retryTimer = null;
+let replyTo = null;      // {roomId, seq, snippet}
+let pendingAttach = null; // {kind,file,uploader,assetId,done,error}
 
 const store = {
   key: () => 'chat:' + me.name,
@@ -115,7 +169,6 @@ function connect() {
   ws = new WebSocket(`ws://${location.host}/ws?token=${encodeURIComponent(me.token)}`);
   ws.onopen = () => {
     setStatus('on', '已连接'); reconnectDelay = 500;
-    // 重连后恢复所有房间：携带本地进度，服务端补发缺口
     const saved = store.load();
     for (const [roomId, info] of Object.entries(saved)) {
       ws.send(JSON.stringify({ type: 'join', room: roomId, lastSeq: info.lastSeenSeq || 0 }));
@@ -132,6 +185,44 @@ function connect() {
 
 function send(obj) { if (ws && ws.readyState === 1) ws.send(JSON.stringify(obj)); }
 
+// -------------------------------------------------------------- 下载票
+
+const ticketCache = new Map();   // assetId -> {url, exp}
+const ticketWaiters = new Map(); // assetId -> resolve
+
+function assetUrl(assetId) {
+  const c = ticketCache.get(assetId);
+  if (c && c.exp - Date.now() > 10_000) return Promise.resolve(c.url);
+  if (ticketWaiters.has(assetId)) return ticketWaiters.get(assetId);
+  const p = new Promise((resolve, reject) => {
+    ticketWaiters.set(assetId, resolve);
+    send({ type: 'asset_ticket', roomId: currentRoom, assetId });
+    setTimeout(() => { reject(new Error('ticket timeout')); ticketWaiters.delete(assetId); }, 5000);
+  });
+  p.catch(() => {});
+  return p;
+}
+
+/** 渲染后为带 data-asset 的媒体节点补 src（票到达后直接赋值，不触发全量重绘） */
+function wireMedia(r) {
+  for (const el of r.querySelectorAll('[data-asset]')) {
+    if (el.dataset.wired) continue;
+    el.dataset.wired = '1';
+    if (el.dataset.status && el.dataset.status !== 'ready') continue;
+    assetUrl(el.dataset.asset).then((url) => {
+      if (el.tagName === 'A') el.href = url;
+      else el.src = url;
+    }).catch(() => {
+      const note = document.createElement('div');
+      note.className = 'dead';
+      note.textContent = '附件暂不可用（无权限或已过期）';
+      el.replaceWith(note);
+    });
+  }
+}
+
+// -------------------------------------------------------------- 消息处理
+
 function handle(m) {
   switch (m.type) {
     case 'welcome': break;
@@ -147,9 +238,8 @@ function handle(m) {
     }
     case 'msg': {
       const r = rooms.get(m.roomId); if (!r) break;
-      if (m.seq <= r.lastSeenSeq) break;          // 幂等消费：重复投递直接丢弃
+      if (m.seq <= r.lastSeenSeq) break;
       r.lastSeenSeq = m.seq;
-      // 自己发的消息：广播回包更新乐观插入的占位消息，不重复上屏
       const own = m.clientMsgId ? r.msgs.findIndex((x) => x.clientMsgId === m.clientMsgId) : -1;
       if (own >= 0) {
         r.msgs[own] = { ...m, mine: true, pending: false };
@@ -162,7 +252,7 @@ function handle(m) {
       render();
       break;
     }
-    case 'ack': {                                  // 服务端确认我发的消息（含分配的 seq）
+    case 'ack': {
       const r = rooms.get(m.roomId); if (!r) break;
       const p = r.pending.get(m.clientMsgId);
       if (p) p.acked = true;
@@ -171,6 +261,29 @@ function handle(m) {
       render();
       break;
     }
+    case 'recalled': {
+      const r = rooms.get(m.roomId); if (!r) break;
+      const x = r.msgs.find((q) => q.seq === m.seq);
+      if (x) x.recalledAt = m.recalledAt;
+      if (replyTo && replyTo.roomId === m.roomId && replyTo.seq === m.seq) {
+        replyTo.snippet = '原消息已撤回'; replyTo.recalled = true; refreshQuoteBar();
+      }
+      render();
+      break;
+    }
+    case 'asset_ticket': {
+      const resolve = ticketWaiters.get(m.assetId);
+      if (resolve) {
+        ticketWaiters.delete(m.assetId);
+        const url = `/api/assets/${m.assetId}?ticket=${encodeURIComponent(m.ticket)}`;
+        ticketCache.set(m.assetId, { url, exp: m.expiresAt });
+        resolve(url);
+      }
+      break;
+    }
+    case 'left':
+      if (m.persisted && m.roomId) leaveRoomLocally(m.roomId);
+      break;
     case 'sync_done':
       if (m.hasMore) send({ type: 'sync', roomId: m.roomId, lastSeq: m.lastSeq });
       break;
@@ -186,6 +299,14 @@ function handle(m) {
       break;
     case 'error':
       sys(currentRoom, `错误 [${m.code}] ${m.message}`);
+      if (m.ref) { // 乐观占位标记失败
+        for (const r of rooms.values()) {
+          const bad = r.msgs.find((x) => x.clientMsgId === m.ref);
+          if (bad) bad.failed = true;
+          r.pending.delete(m.ref);
+        }
+        render();
+      }
       break;
     case 'server_shutdown': sys(currentRoom, '服务器即将重启…'); break;
   }
@@ -202,13 +323,13 @@ function scheduleAck() {
 function refreshMembers() { if (currentRoom) send({ type: 'members', roomId: currentRoom }); }
 setInterval(refreshMembers, 5000);
 
-// 未 ACK 的消息每秒重发一次（clientMsgId 不变，服务端幂等）
+// 未 ACK 的消息每秒重发（clientMsgId 与完整载荷不变，服务端幂等；附件不重传字节）
 retryTimer = setInterval(() => {
   for (const [roomId, r] of rooms) {
     for (const [cid, p] of r.pending) {
       if (!p.acked && Date.now() - p.sentAt > 1000) {
         p.sentAt = Date.now();
-        send({ type: 'msg', roomId, clientMsgId: cid, content: p.content });
+        send({ type: 'msg', roomId, clientMsgId: cid, ...p.payload });
       }
     }
   }
@@ -219,6 +340,40 @@ function sys(roomId, text) {
   r.msgs.push({ sys: text }); render();
 }
 
+// -------------------------------------------------------------- 渲染
+
+function kindLabel(m) {
+  if (m.kind === 'image') return '图片';
+  if (m.kind === 'voice') return `语音${m.asset?.meta?.durationMs ? ' ' + Math.round(m.asset.meta.durationMs / 1000) + '″' : ''}`;
+  return '文件';
+}
+
+function fmtSize(n) {
+  if (n < 1024) return n + 'B';
+  if (n < 1024 * 1024) return (n / 1024).toFixed(1) + 'KB';
+  return (n / 1024 / 1024).toFixed(1) + 'MB';
+}
+
+function attachmentHtml(m) {
+  const a = m.asset;
+  if (!a) return '';
+  if (m.pending) return '<div class="dead">[' + kindLabel(m) + '发送中…]</div>';
+  const dead = a.status && a.status !== 'ready';
+  if (dead) return `<div class="dead">[${kindLabel(m)}已过期或被拦截]</div>`;
+  if (m.kind === 'image') {
+    return `<img class="thumb" data-asset="${a.id}" data-status="${a.status || 'ready'}"
+             alt="${escapeHtml(a.name || '')}" loading="lazy">`;
+  }
+  if (m.kind === 'voice') {
+    return `<div class="voicecard">🎤 <audio controls preload="none"
+             data-asset="${a.id}" data-status="${a.status || 'ready'}"></audio>
+             <span class="dur">${a.meta?.durationMs ? Math.round(a.meta.durationMs / 1000) + ' 秒' : ''}</span></div>`;
+  }
+  return `<a class="filecard btn" data-asset="${a.id}" data-status="${a.status || 'ready'}"
+           target="_blank" rel="noopener"><span class="ico">📄</span>
+           <span>${escapeHtml(a.name || 'file')}<br><span class="sz">${fmtSize(a.size || 0)}</span></span></a>`;
+}
+
 function renderRooms() {
   $('roomList').innerHTML = [...rooms].map(([id, r]) =>
     `<div class="room ${id === currentRoom ? 'active' : ''}" data-id="${id}">
@@ -226,7 +381,7 @@ function renderRooms() {
        <span class="badge">${r.role === 'admin' ? '管理员' : ''}</span>
      </div>`).join('');
   for (const el of $('roomList').children) {
-    el.onclick = () => { currentRoom = el.dataset.id; renderRooms(); render(); refreshMembers(); };
+    el.onclick = () => { currentRoom = el.dataset.id; replyTo = null; renderRooms(); render(); refreshMembers(); };
   }
 }
 
@@ -234,22 +389,70 @@ function render() {
   const r = rooms.get(currentRoom);
   $('composer').classList.toggle('hidden', !r);
   $('members').classList.toggle('hidden', !r);
+  $('chatHead').classList.toggle('hidden', !r);
+  refreshQuoteBar(); refreshAttachChip();
   if (!r) return;
+  $('roomTitle').textContent = r.name || currentRoom;
+  $('leaveRoomBtn').classList.toggle('hidden', false);
   const box = $('messages');
   box.innerHTML = r.msgs.map((m) => {
     if (m.sys) return `<div class="sys">${escapeHtml(m.sys)}</div>`;
-    const tick = m.mine ? `<span class="tick">${m.pending ? '…' : '✓'}</span>` : '';
-    return `<div class="msg ${m.mine ? 'mine' : ''}">
-      <div class="meta">${escapeHtml(m.fromName || '')} · #${m.seq} ${tick}</div>
-      <div>${escapeHtml(m.content)}</div></div>`;
+    const tick = m.mine ? `<span class="tick">${m.failed ? '发送失败' : (m.pending ? '…' : '✓')}</span>` : '';
+    const acts = `<span class="acts">
+        <button data-act="reply" title="回复">↩</button>
+        ${(m.mine || r.role === 'admin') && !m.recalledAt && !m.pending ? '<button data-act="recall" title="撤回">⛔</button>' : ''}
+      </span>`;
+    const quote = m.replyTo ? `<div class="quote">${m.replyTo.recalled
+      ? '原消息已撤回'
+      : `${escapeHtml(m.replyTo.fromName || '')}：${m.replyTo.kind && m.replyTo.kind !== 'text'
+        ? '[' + ({ image: '图片', file: '文件', voice: '语音' })[m.replyTo.kind] + '] '
+        : ''}${escapeHtml(m.replyTo.snippet || '')}`}</div>` : '';
+    if (m.recalledAt) {
+      return `<div class="msg ${m.mine ? 'mine' : ''}" data-seq="${m.seq}">
+        <div class="meta">${escapeHtml(m.fromName || '')} · #${m.seq} ${tick}${acts}</div>
+        <div class="dead">该消息已撤回</div></div>`;
+    }
+    return `<div class="msg ${m.mine ? 'mine' : ''} ${m.failed ? 'failed' : ''}" data-seq="${m.seq}">
+      <div class="meta">${escapeHtml(m.fromName || '')} · #${m.seq} ${tick}${acts}</div>
+      ${quote}
+      ${attachmentHtml(m)}
+      ${m.content ? `<div>${escapeHtml(m.content)}</div>` : ''}
+    </div>`;
   }).join('');
+  wireMedia(box);
   box.scrollTop = box.scrollHeight;
+  for (const b of box.querySelectorAll('button[data-act]')) {
+    b.onclick = () => {
+      const node = b.closest('.msg');
+      const seq = Number(node?.dataset.seq);
+      const msg = r.msgs.find((x) => x.seq === seq);
+      if (!msg) return;
+      if (b.dataset.act === 'reply') {
+        replyTo = {
+          roomId: currentRoom, seq: msg.seq, recalled: !!msg.recalledAt,
+          snippet: msg.recalledAt ? '原消息已撤回'
+            : (msg.content || `[${kindLabel(msg)}] ${msg.asset?.name || ''}`),
+        };
+        refreshQuoteBar(); $('msgInput').focus();
+      } else if (b.dataset.act === 'recall') {
+        send({ type: 'recall', roomId: currentRoom, seq: msg.seq });
+      }
+    };
+  }
+  for (const img of box.querySelectorAll('img.thumb')) {
+    img.onclick = () => { $('overlayImg').src = img.src; $('overlay').classList.add('on'); };
+  }
   const muted = r.mutedUntil > Date.now();
-  $('msgInput').placeholder = muted ? `你已被禁言至 ${new Date(r.mutedUntil).toLocaleTimeString()}` : '发送消息…';
+  $('msgInput').placeholder = muted ? `你已被禁言至 ${new Date(r.mutedUntil).toLocaleTimeString()}` : '发送消息…（可直接粘贴/拖入图片）';
   $('msgInput').disabled = muted;
 }
 
-// 把 members 响应接进渲染
+function refreshQuoteBar() {
+  const on = replyTo && replyTo.roomId === currentRoom;
+  $('quoteBar').classList.toggle('on', !!on);
+  if (on) $('quoteText').textContent = `回复 #${replyTo.seq}：${replyTo.snippet}`;
+}
+
 function renderMembers(list) {
   const r = rooms.get(currentRoom); if (!r) return;
   $('members').innerHTML = '<b>成员</b>' + list.map((m) => {
@@ -279,13 +482,253 @@ function escapeHtml(s) {
   return String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 }
 
-// ---------------------------------------------------------------- 事件绑定
+// -------------------------------------------------------------- 上传器
+
+const authHeader = () => ({ authorization: `Bearer ${me.token}` });
+
+class Uploader {
+  /** @param kind image|file|voice；durationMs 用于语音 */
+  constructor(file, kind, { durationMs = null, chunkSize = 1024 * 1024 } = {}) {
+    this.file = file; this.kind = kind; this.durationMs = durationMs;
+    this.chunkSize = chunkSize;
+    this.total = Math.max(1, Math.ceil(file.size / chunkSize));
+    this.received = new Set();
+    this.taskId = null; this.assetId = null;
+    this.paused = false; this.done = false; this.error = null;
+    this.xhrs = new Set();
+    this.onChange = () => {};
+  }
+  notify() { this.onChange(); }
+
+  async _sha(buf) {
+    const digest = await crypto.subtle.digest('SHA-256', buf);
+    return [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, '0')).join('');
+  }
+
+  async start() {
+    try {
+      // ≤8MiB 计算整文件 sha 争取秒传；大文件跳过，避免整读内存
+      let wholeSha = null;
+      if (this.file.size <= 8 * 1024 * 1024) wholeSha = await this._sha(await this.file.arrayBuffer());
+      const cr = await (await fetch('/api/uploads', {
+        method: 'POST', headers: { 'content-type': 'application/json', ...authHeader() },
+        body: JSON.stringify({
+          filename: this.file.name || ('voice-' + Date.now() + '.webm'),
+          size: this.file.size, sha256: wholeSha, kind: this.kind,
+          chunkSize: this.chunkSize, durationMs: this.durationMs,
+        }),
+      })).json();
+      if (cr.instant) { this.done = true; this.assetId = cr.assetId; this.progress = 1; this.notify(); return; }
+      this.taskId = cr.taskId;
+      (cr.receivedChunks || []).forEach((c) => this.received.add(c.idx));
+      await this._pump(wholeSha);
+    } catch (err) {
+      this.error = err.message || '上传失败'; this.notify();
+    }
+  }
+
+  /** 两个分片并发；暂停/出错时由 resume 重新拉取已收清单做差集 */
+  async _pump(wholeSha) {
+    let next = 0;
+    const worker = async () => {
+      while (!this.paused && !this.error) {
+        let idx;
+        do { idx = next++; } while (this.received.has(idx) && idx < this.total);
+        if (idx >= this.total) return;
+        await this._putChunk(idx);
+      }
+    };
+    await Promise.all([worker(), worker()]);
+    if (this.paused || this.error) return;
+    if (this.received.size < this.total) { // 兜底：以服务端状态为准补缺
+      const st = await (await fetch(`/api/uploads/${this.taskId}`, { headers: authHeader() })).json();
+      this.received = new Set((st.receivedChunks || []).map((c) => c.idx));
+      if (this.received.size < this.total) return this._pump(wholeSha);
+    }
+    const sha = wholeSha || await this._sha(await this.file.arrayBuffer());
+    const res = await fetch(`/api/uploads/${this.taskId}/complete`, {
+      method: 'POST', headers: { 'content-type': 'application/json', ...authHeader() },
+      body: JSON.stringify({ sha256: sha }),
+    });
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok) { this.error = body.message || body.error || '完成失败'; this.notify(); return; }
+    this.assetId = body.assetId; this.done = true; this.progress = 1; this.notify();
+  }
+
+  _putChunk(idx) {
+    return new Promise((resolve) => {
+      const start = idx * this.chunkSize;
+      const slice = this.file.slice(start, Math.min(start + this.chunkSize, this.file.size));
+      slice.arrayBuffer().then(async (ab) => {
+        const bytes = new Uint8Array(ab);
+        const hash = await this._sha(ab);
+        const xhr = new XMLHttpRequest();
+        this.xhrs.add(xhr);
+        xhr.open('PUT', `/api/uploads/${this.taskId}/chunks/${idx}`);
+        xhr.setRequestHeader('authorization', `Bearer ${me.token}`);
+        xhr.setRequestHeader('X-Chunk-Sha256', hash);
+        xhr.upload.onprogress = (e) => this._updateProgress(idx, e.lengthComputable ? e.loaded / bytes.length : 0);
+        xhr.onload = () => {
+          this.xhrs.delete(xhr);
+          if (xhr.status === 200) { this.received.add(idx); this._updateProgress(idx, 1); resolve(); }
+          else if (xhr.status === 409) resolve(); // 片冲突，等待 resume 对账
+          else { this.error = `分片 ${idx + 1} 失败 (${xhr.status})`; this.notify(); resolve(); }
+        };
+        xhr.onerror = xhr.onabort = () => { this.xhrs.delete(xhr); resolve(); };
+        xhr.send(bytes);
+      });
+    });
+  }
+
+  sentBytes = 0;
+  progress = 0;
+  _progressPart = new Map();
+  _updateProgress(idx, frac) {
+    this._progressPart.set(idx, frac);
+    let doneBytes = 0;
+    for (const [i, f] of this._progressPart) {
+      const start = i * this.chunkSize;
+      doneBytes += Math.min(f * this.chunkSize, this.file.size - start);
+    }
+    this.progress = Math.min(1, doneBytes / this.file.size);
+    this.notify();
+  }
+
+  pause() {
+    this.paused = true;
+    for (const x of this.xhrs) x.abort();
+    this.xhrs.clear();
+    this.notify();
+  }
+
+  async resume() {
+    if (this.done || !this.taskId) return;
+    this.paused = false; this.error = null;
+    try {
+      const st = await (await fetch(`/api/uploads/${this.taskId}`, { headers: authHeader() })).json();
+      this.received = new Set((st.receivedChunks || []).map((c) => c.idx));
+      let wholeSha = null;
+      if (this.file.size <= 8 * 1024 * 1024) wholeSha = await this._sha(await this.file.arrayBuffer());
+      await this._pump(wholeSha);
+    } catch (err) { this.error = err.message; this.notify(); }
+  }
+
+  async cancel() {
+    if (this.done) return;
+    this.paused = true;
+    for (const x of this.xhrs) x.abort();
+    if (this.taskId) {
+      try { await fetch(`/api/uploads/${this.taskId}/abort`, { method: 'POST', headers: authHeader() }); } catch { /* 忽略 */ }
+    }
+  }
+}
+
+// -------------------------------------------------------------- 附件选择 / 录音
+
+function kindOf(file) { return file.type && file.type.startsWith('image/') ? 'image' : 'file'; }
+
+function attachFile(file, kind = kindOf(file), extra = {}) {
+  if (!file.size) { alert('不支持空文件'); return; }
+  clearPendingAttach();
+  const up = new Uploader(file, kind, extra);
+  pendingAttach = { kind, file, uploader: up, assetId: null, done: false, error: null };
+  up.onChange = () => {
+    pendingAttach.done = up.done; pendingAttach.assetId = up.assetId; pendingAttach.error = up.error;
+    refreshAttachChip();
+  };
+  refreshAttachChip();
+  up.start();
+}
+
+function clearPendingAttach() {
+  if (pendingAttach) { pendingAttach.uploader.cancel(); pendingAttach = null; }
+}
+
+function refreshAttachChip() {
+  const chip = $('attachChip');
+  if (!pendingAttach) { chip.classList.remove('on'); return; }
+  chip.classList.add('on');
+  const { uploader: up, kind } = pendingAttach;
+  $('attachIcon').textContent = kind === 'image' ? '🖼️' : kind === 'voice' ? '🎤' : '📎';
+  $('attachName').textContent = `${up.file.name || '语音'} — ${
+    up.error ? up.error : up.done ? '已就绪，按发送' : `上传中 ${Math.round((up.progress || 0) * 100)}%`}`;
+  $('attachBar').style.width = `${Math.round((up.progress || 0) * 100)}%`;
+  const btn = $('attachToggle');
+  btn.textContent = up.error ? '重试' : (up.paused ? '继续' : (up.done ? '✓' : '暂停'));
+  btn.disabled = up.done;
+}
+
+$('fileInput').onchange = (e) => { if (e.target.files[0]) attachFile(e.target.files[0], 'file'); e.target.value = ''; };
+$('imageInput').onchange = (e) => { if (e.target.files[0]) attachFile(e.target.files[0], 'image'); e.target.value = ''; };
+$('fileBtn').onclick = () => $('fileInput').click();
+$('imageBtn').onclick = () => $('imageInput').click();
+$('attachCancel').onclick = () => { clearPendingAttach(); refreshAttachChip(); };
+$('attachToggle').onclick = () => {
+  const up = pendingAttach?.uploader; if (!up) return;
+  if (up.error) up.resume();
+  else if (up.paused) up.resume();
+  else up.pause();
+};
+
+// 粘贴图片
+window.addEventListener('paste', (e) => {
+  if (!currentRoom) return;
+  for (const item of e.clipboardData?.items || []) {
+    if (item.kind.startsWith('image/')) {
+      const f = item.getAsFile();
+      if (f) attachFile(f, 'image');
+    }
+  }
+});
+// 拖拽文件
+const msgBox = $('messages');
+msgBox.addEventListener('dragover', (e) => { e.preventDefault(); msgBox.classList.add('dragover'); });
+msgBox.addEventListener('dragleave', () => msgBox.classList.remove('dragover'));
+msgBox.addEventListener('drop', (e) => {
+  e.preventDefault(); msgBox.classList.remove('dragover');
+  if (!currentRoom) return;
+  for (const f of e.dataTransfer?.files || []) attachFile(f, kindOf(f));
+});
+
+// 录音：点一下开始，再点结束并加入待发送
+let recorder = null, recChunks = [], recStartedAt = 0, recTimer = null;
+$('voiceBtn').onclick = async () => {
+  if (recorder && recorder.state === 'recording') { stopRecording(); return; }
+  if (!navigator.mediaDevices?.getUserMedia) { alert('当前浏览器不支持录音'); return; }
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    const mime = MediaRecorder.isTypeSupported('audio/webm') ? 'audio/webm'
+      : MediaRecorder.isTypeSupported('audio/mp4') ? 'audio/mp4' : '';
+    recorder = new MediaRecorder(stream, mime ? { mimeType: mime } : undefined);
+    recChunks = [];
+    recorder.ondataavailable = (e) => e.data.size && recChunks.push(e.data);
+    recorder.onstop = () => {
+      stream.getTracks().forEach((t) => t.stop());
+      $('voiceBtn').classList.remove('rec'); $('voiceBtn').textContent = '🎤';
+      clearInterval(recTimer);
+      const blob = new Blob(recChunks, { type: recorder.mimeType || 'audio/webm' });
+      const dur = Date.now() - recStartedAt;
+      const ext = (recorder.mimeType || '').includes('mp4') ? 'm4a' : 'webm';
+      attachFile(new File([blob], `voice-${Date.now()}.${ext}`, { type: blob.type }), 'voice', { durationMs: dur });
+    };
+    recorder.start();
+    recStartedAt = Date.now();
+    $('voiceBtn').classList.add('rec'); $('voiceBtn').textContent = '● 停止';
+    recTimer = setInterval(() => {
+      $('voiceBtn').textContent = `● ${Math.round((Date.now() - recStartedAt) / 1000)}s`;
+    }, 500);
+  } catch { alert('无法访问麦克风'); }
+};
+function stopRecording() { if (recorder) recorder.stop(); }
+
+$('overlay').onclick = () => $('overlay').classList.remove('on');
+
+// -------------------------------------------------------------- 房间事件
 
 $('loginForm').onsubmit = async (e) => {
   e.preventDefault();
   const name = $('nameInput').value.trim(); if (!name) return;
   me = await login(name);
-  // 恢复房间进度
   const saved = store.load();
   for (const [id, info] of Object.entries(saved)) {
     rooms.set(id, { name: info.name, msgs: [], pending: new Map(), lastSeenSeq: info.lastSeenSeq || 0 });
@@ -308,17 +751,65 @@ $('joinBtn').onclick = () => {
   if (name) send({ type: 'join', room: name, lastSeq: 0 });
 };
 
+$('leaveRoomBtn').onclick = () => {
+  if (!currentRoom) return;
+  if (!confirm('确定退出该房间？退出后将无法查看消息与下载文件，重新加入可恢复。')) return;
+  send({ type: 'leave', roomId: currentRoom, mode: 'leave' });
+};
+
+function leaveRoomLocally(roomId) {
+  rooms.delete(roomId);
+  const saved = store.load(); delete saved[roomId];
+  localStorage.setItem(store.key(), JSON.stringify(saved));
+  if (currentRoom === roomId) {
+    currentRoom = [...rooms.keys()][0] || null;
+    replyTo = null;
+  }
+  renderRooms(); render(); refreshMembers();
+}
+
+$('quoteCancel').onclick = () => { replyTo = null; refreshQuoteBar(); };
+
+// -------------------------------------------------------------- 发送
+
 $('composer').onsubmit = (e) => {
   e.preventDefault();
-  const content = $('msgInput').value.trim(); if (!content || !currentRoom) return;
-  const cid = crypto.randomUUID();
+  if (!currentRoom) return;
+  const caption = $('msgInput').value.trim();
   const r = rooms.get(currentRoom);
-  r.pending.set(cid, { content, sentAt: Date.now(), acked: false });
-  r.msgs.push({ mine: true, fromName: me.name, content, seq: '…', pending: true, clientMsgId: cid });
-  send({ type: 'msg', roomId: currentRoom, clientMsgId: cid, content });
+  const muted = r.mutedUntil > Date.now();
+  if (muted) return;
+
+  let payload, optimistic, chipKind = 'text';
+  if (pendingAttach) {
+    const a = pendingAttach;
+    if (a.error) { alert('附件上传失败，请重试'); return; }
+    if (!a.done || !a.assetId) { alert('请等待附件上传完成'); return; }
+    const meta = { width: null, height: null, durationMs: a.uploader.durationMs };
+    payload = { kind: a.kind, assetId: a.assetId, content: caption,
+      ...(replyTo ? { replyToSeq: replyTo.seq } : {}) };
+    optimistic = {
+      mine: true, fromName: me.name, content: caption, seq: '…', pending: true,
+      kind: a.kind, asset: { id: a.assetId, name: a.file.name, size: a.file.size, meta, status: 'ready' },
+      ...(replyTo ? { replyTo: { seq: replyTo.seq, snippet: replyTo.snippet, recalled: !!replyTo.recalled, fromName: me.name } } : {}),
+    };
+    chipKind = a.kind;
+  } else if (caption) {
+    payload = { content: caption, ...(replyTo ? { replyToSeq: replyTo.seq } : {}) };
+    optimistic = { mine: true, fromName: me.name, content: caption, seq: '…', pending: true, kind: 'text' };
+  } else return;
+
+  const cid = crypto.randomUUID();
+  r.pending.set(cid, { payload, sentAt: Date.now(), acked: false });
+  r.msgs.push({ clientMsgId: cid, ...optimistic });
+  send({ type: 'msg', roomId: currentRoom, clientMsgId: cid, ...payload });
   $('msgInput').value = '';
+  replyTo = null;
+  clearPendingAttach();
+  refreshQuoteChipAndBar();
   render();
 };
+function refreshQuoteChipAndBar() { refreshQuoteBar(); refreshAttachChip(); }
 </script>
 </body>
 </html>

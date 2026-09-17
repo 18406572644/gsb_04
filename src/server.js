@@ -7,6 +7,9 @@ const { WebSocketServer } = require('ws');
 
 const { ChatDB } = require('./db');
 const { Hub, Connection } = require('./hub');
+const { LocalStorage } = require('./storage');
+const { Scanner } = require('./scanner');
+const { UploadManager, UploadError } = require('./uploads');
 const defaultConfig = require('./config');
 const {
   randomId,
@@ -14,6 +17,8 @@ const {
   signToken,
   verifyToken,
   isNonEmptyString,
+  signAssetTicket,
+  verifyAssetTicket,
   parseFrame,
   now,
 } = require('./util');
@@ -51,9 +56,9 @@ class TokenBucket {
   }
 }
 
-/** 数据库消息行 -> 下发帧 */
-function msgFrame(m) {
-  return {
+/** 数据库消息行 -> 下发帧（实时广播 / sync / history 共用，形状一致） */
+function toMsgFrame(m) {
+  const frame = {
     type: 'msg',
     roomId: m.roomId,
     seq: m.seq,
@@ -62,7 +67,33 @@ function msgFrame(m) {
     fromName: m.fromName,
     content: m.content,
     ts: m.ts,
+    kind: m.kind || 'text',
+    recalledAt: m.recalledAt || 0,
   };
+  if (m.assetId) {
+    frame.asset = {
+      id: m.assetId,
+      name: m.assetName,
+      size: m.assetSize,
+      mime: m.assetMime,
+      status: m.assetStatus,
+      meta: {
+        width: m.assetWidth ?? null,
+        height: m.assetHeight ?? null,
+        durationMs: m.assetDurationMs ?? null,
+      },
+    };
+  }
+  if (m.replyToSeq != null) {
+    frame.replyTo = {
+      seq: m.replyToSeq,
+      fromName: m.replyFromName || null,
+      kind: m.replyKind || 'text',
+      snippet: m.replyRecalledAt ? '' : (m.replySnippet || ''),
+      recalled: !!m.replyRecalledAt,
+    };
+  }
+  return frame;
 }
 
 function createChatServer(overrides = {}) {
@@ -70,6 +101,9 @@ function createChatServer(overrides = {}) {
   const db = new ChatDB(config.dbPath);
   const hub = new Hub(config);
   const limiter = new TokenBucket(config.rateLimitPerSec, config.rateLimitBurst);
+  const storage = new LocalStorage({ root: config.storageRoot });
+  const scanner = new Scanner(config);
+  const uploads = new UploadManager({ db, storage, scanner, config });
   const publicDir = path.join(__dirname, '..', 'public');
 
   // ---------------------------------------------------------------- 消息处理
@@ -79,14 +113,16 @@ function createChatServer(overrides = {}) {
     const batch = db.getMessagesAfter(roomId, fromSeq, config.syncBatchSize + 1);
     const hasMore = batch.length > config.syncBatchSize;
     const slice = hasMore ? batch.slice(0, config.syncBatchSize) : batch;
-    for (const m of slice) hub.send(conn, msgFrame(m), { track: true, roomId, seq: m.seq });
+    for (const m of slice) hub.send(conn, toMsgFrame(m), { track: true, roomId, seq: m.seq });
     const lastSeq = slice.length ? slice[slice.length - 1].seq : fromSeq;
     hub.send(conn, { type: 'sync_done', roomId, lastSeq, hasMore });
   }
 
+  /** 要求当前为在群（active）成员；已持久退群（active=0）一律拒绝 */
   function requireMember(conn, roomId) {
     const member = db.getMember(roomId, conn.userId);
     if (!member) fail('NOT_MEMBER', 'not a member of this room');
+    if (!member.active) fail('MEMBERSHIP_INACTIVE', 'you have left this room');
     return member;
   }
 
@@ -137,28 +173,81 @@ function createChatServer(overrides = {}) {
     },
 
     leave(conn, msg) {
-      hub.leaveRoom(conn, msg.roomId);
-      hub.send(conn, { type: 'left', roomId: msg.roomId });
+      if (!isNonEmptyString(msg.roomId, 128)) fail('BAD_REQUEST', 'invalid roomId');
+      // mode='detach'（默认）：仅本连接退出广播集（旧客户端行为，members 行保留）
+      // mode='leave'：持久退群（active=0），该用户所有连接同时移出广播集
+      const persisted = msg.mode === 'leave';
+      if (persisted) {
+        const member = db.getMember(msg.roomId, conn.userId);
+        if (!member) fail('NOT_MEMBER', 'not a member of this room');
+        if (member.active) db.deactivateMember(msg.roomId, conn.userId);
+        hub.leaveRoomForUser(conn.userId, msg.roomId);
+      } else {
+        hub.leaveRoom(conn, msg.roomId);
+      }
+      hub.send(conn, { type: 'left', roomId: msg.roomId, persisted });
     },
 
     msg(conn, msg) {
       if (!isNonEmptyString(msg.roomId, 128)) fail('BAD_REQUEST', 'invalid roomId');
       if (!isNonEmptyString(msg.clientMsgId, 64)) fail('BAD_REQUEST', 'invalid clientMsgId');
-      if (!isNonEmptyString(msg.content, config.maxContentLength)) {
-        fail('BAD_REQUEST', `content must be 1..${config.maxContentLength} chars`);
+      const kind = msg.kind === undefined ? 'text' : msg.kind;
+      if (!['text', 'image', 'file', 'voice'].includes(kind)) fail('BAD_REQUEST', 'invalid kind');
+      // text: 正文非空；富媒体: caption 可省略（按 '' 计）但有长度上限
+      let content = msg.content;
+      if (content === undefined || content === null) content = '';
+      if (typeof content !== 'string'
+          || (kind === 'text'
+            ? !(content.length > 0 && content.length <= config.maxContentLength)
+            : content.length > config.captionMaxLength)) {
+        fail('BAD_REQUEST',
+          kind === 'text'
+            ? `content must be 1..${config.maxContentLength} chars`
+            : `caption must be <= ${config.captionMaxLength} chars`);
       }
+      let replyToSeq = null;
+      if (msg.replyToSeq !== undefined && msg.replyToSeq !== null) {
+        if (!Number.isInteger(msg.replyToSeq) || msg.replyToSeq < 1) fail('BAD_REQUEST', 'invalid replyToSeq');
+        replyToSeq = msg.replyToSeq;
+      }
+
       const member = requireMember(conn, msg.roomId);
       if (member.muted_until > now()) {
         fail('MUTED', `you are muted until ${new Date(member.muted_until).toISOString()}`);
       }
       if (!limiter.take(conn.userId)) fail('RATE_LIMITED', 'sending too fast, slow down');
 
-      // 先落库（同事务分配 seq），再 ACK，再广播 —— 崩溃也不丢已确认消息
+      let assetId = null;
+      if (kind !== 'text') {
+        if (!isNonEmptyString(msg.assetId, 128)) fail('BAD_REQUEST', 'assetId required for rich messages');
+        const asset = db.getAsset(msg.assetId);
+        if (!asset) fail('NO_SUCH_ASSET', 'asset not found');
+        if (asset.kind !== kind) fail('BAD_REQUEST', 'asset kind mismatch');
+        if (asset.blob_status === 'quarantined') fail('ASSET_INFECTED', 'asset was quarantined');
+        if (asset.blob_status !== 'ready') fail('ASSET_DELETED', 'asset is not available');
+        // scope：只能发送自己上传的 asset，或该 asset 已在本房间作为未撤回消息存在
+        // （防止拿别人的 assetId 跨房间拖取文件）
+        if (!db.isAssetOwner(asset.id, conn.userId)
+            && !db.assetReferencedLiveInRoom(msg.roomId, asset.id)) {
+          fail('ASSET_SCOPE', 'asset is not usable in this room');
+        }
+        assetId = asset.id;
+      }
+
+      if (replyToSeq != null) {
+        const target = db.getMessage(msg.roomId, replyToSeq);
+        if (!target) fail('BAD_REPLY', 'referenced message does not exist');
+      }
+
+      // 先落库（同事务分配 seq），再 ACK，再广播 —— 富媒体字节绝不出现在帧中
       const { message, duplicate } = db.insertMessage({
         roomId: msg.roomId,
         clientMsgId: msg.clientMsgId,
         senderId: conn.userId,
-        content: msg.content,
+        content,
+        kind,
+        assetId,
+        replyToSeq,
       });
       hub.send(conn, {
         type: 'ack',
@@ -169,7 +258,64 @@ function createChatServer(overrides = {}) {
       });
       if (!duplicate) {
         // 重复提交（客户端重试）只回 ACK，不再广播 —— 发送幂等
-        hub.broadcast(msg.roomId, msgFrame(message), { track: true, seq: message.seq });
+        hub.broadcast(msg.roomId, toMsgFrame(message), { track: true, seq: message.seq });
+      }
+    },
+
+    // 富媒体下载票：校验「active 成员 + 房间内有未撤回引用」后发短时 HMAC 票
+    asset_ticket(conn, msg) {
+      if (!isNonEmptyString(msg.roomId, 128) || !isNonEmptyString(msg.assetId, 128)) {
+        fail('BAD_REQUEST', 'invalid roomId/assetId');
+      }
+      requireMember(conn, msg.roomId);
+      const asset = db.getAsset(msg.assetId);
+      if (!asset) fail('NO_SUCH_ASSET', 'asset not found');
+      if (asset.blob_status !== 'ready') fail('ASSET_DELETED', 'asset is not available');
+      if (!db.assetHasLiveRefForUser(asset.id, conn.userId)) {
+        fail('ASSET_FORBIDDEN', 'no permission to access this asset');
+      }
+      const exp = now() + config.assetTicketTtlMs;
+      hub.send(conn, {
+        type: 'asset_ticket',
+        assetId: asset.id,
+        ticket: signAssetTicket(conn.userId, asset.id, exp, config.authSecret),
+        expiresAt: exp,
+      });
+    },
+
+    // 撤回：发送者在时间窗内，或本房 admin（不限时、可撤回他人）。墓碑保留行。
+    recall(conn, msg) {
+      if (!isNonEmptyString(msg.roomId, 128) || !Number.isInteger(msg.seq)) {
+        fail('BAD_REQUEST', 'invalid roomId/seq');
+      }
+      const member = requireMember(conn, msg.roomId);
+      const target = db.getMessage(msg.roomId, msg.seq);
+      if (!target) fail('NOT_FOUND', 'message not found');
+      if (target.recalledAt) {
+        hub.send(conn, {
+          type: 'recalled', roomId: msg.roomId, seq: msg.seq,
+          by: target.from, recalledAt: target.recalledAt,
+        });
+        return;
+      }
+      const isAdmin = member.role === 'admin';
+      if (target.from !== conn.userId && !isAdmin) fail('RECALL_FORBIDDEN', 'can only recall your own message');
+      if (!isAdmin && now() - target.ts > config.recallWindowMs) {
+        fail('RECALL_TOO_LATE', `recall window is ${config.recallWindowMs / 1000}s`);
+      }
+      const { recalled, message } = db.recallMessage(msg.roomId, msg.seq);
+      if (recalled) {
+        hub.broadcast(msg.roomId, {
+          type: 'recalled', roomId: msg.roomId, seq: msg.seq,
+          by: conn.userId, recalledAt: message.recalledAt,
+        });
+        // 撤回后若该 blob 已无任何活引用/任务占用，物理删除（隔离副本不删）
+        if (message.assetId) {
+          const asset = db.getAsset(message.assetId);
+          if (asset && asset.blob_status === 'ready') {
+            uploads.gcBlobIfUnreferenced(asset.sha256).catch((e) => console.error('[gc]', e));
+          }
+        }
       }
     },
 
@@ -193,7 +339,7 @@ function createChatServer(overrides = {}) {
       requireMember(conn, msg.roomId);
       const limit = Math.min(Math.max(1, msg.limit || 50), config.historyMaxLimit);
       const before = Number.isInteger(msg.beforeSeq) ? msg.beforeSeq : Number.MAX_SAFE_INTEGER;
-      const messages = db.getMessagesBefore(msg.roomId, before, limit);
+      const messages = db.getMessagesBefore(msg.roomId, before, limit).map(toMsgFrame);
       hub.send(conn, { type: 'history', roomId: msg.roomId, messages, hasMore: messages.length === limit });
     },
 
@@ -277,7 +423,7 @@ function createChatServer(overrides = {}) {
 
   const MIME = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript', '.css': 'text/css' };
 
-  function readBody(req, limit = 4096) {
+  function readBody(req, limit = 8192) {
     return new Promise((resolve, reject) => {
       let size = 0;
       const chunks = [];
@@ -293,6 +439,103 @@ function createChatServer(overrides = {}) {
       req.on('end', () => resolve(Buffer.concat(chunks).toString()));
       req.on('error', reject);
     });
+  }
+
+  /** HTTP Bearer 鉴权（复用 WS 同一套登录 token），返回 user 或 null */
+  function authenticate(req) {
+    const h = req.headers.authorization;
+    if (!h || !h.startsWith('Bearer ')) return null;
+    const userId = verifyToken(h.slice(7), config.authSecret);
+    return userId ? db.getUserById(userId) : null;
+  }
+
+  function requireHttpUser(req, res) {
+    const user = authenticate(req);
+    if (!user) {
+      res.writeHead(401, { 'content-type': 'application/json' });
+      res.end(JSON.stringify({ error: 'UNAUTHORIZED', message: 'login required' }));
+      return null;
+    }
+    return user;
+  }
+
+  /** 把 UploadError 转成 HTTP 错误响应 */
+  function sendUploadError(res, err) {
+    if (err instanceof UploadError) {
+      res.writeHead(err.status, { 'content-type': 'application/json; charset=utf-8' });
+      res.end(JSON.stringify({ error: err.code, message: err.message, ...err.extra }));
+      return;
+    }
+    console.error('[upload error]', err);
+    res.writeHead(500, { 'content-type': 'application/json' });
+    res.end(JSON.stringify({ error: 'INTERNAL', message: 'internal error' }));
+  }
+
+  /** GET /api/assets/:id?ticket= —— 凭短时 HMAC 票 Range 流式下载/播放 */
+  function serveAsset(req, res, url) {
+    const assetId = decodeURIComponent(url.pathname.split('/').pop());
+    const claims = verifyAssetTicket(url.searchParams.get('ticket'), config.authSecret);
+    const failAsset = (code, message, status = 403) => {
+      res.writeHead(status, { 'content-type': 'application/json; charset=utf-8' });
+      res.end(JSON.stringify({ error: code, message }));
+    };
+    if (!claims || claims.assetId !== assetId) return failAsset('ASSET_FORBIDDEN', 'invalid ticket');
+    const asset = db.getAsset(assetId);
+    if (!asset) return failAsset('NO_SUCH_ASSET', 'asset not found', 404);
+    if (asset.blob_status !== 'ready') return failAsset('ASSET_DELETED', 'asset unavailable', 410);
+    // 鉴权：请求者当前为某房间 active 成员，且该房有一条引用此 asset 的未撤回消息
+    if (!db.assetHasLiveRefForUser(assetId, claims.userId)) {
+      return failAsset('ASSET_FORBIDDEN', 'no permission to access this asset');
+    }
+    const st = storage.statBlob(asset.sha256);
+    if (!st || st.size !== asset.size) {
+      return failAsset('ASSET_DELETED', 'blob missing', 410);
+    }
+
+    const inline = asset.kind === 'image' || asset.kind === 'voice';
+    const dispositionType = inline ? 'inline' : 'attachment';
+    const fname = encodeURIComponent(asset.file_name);
+    const headers = {
+      'Accept-Ranges': 'bytes',
+      'Content-Type': inline ? asset.mime : 'application/octet-stream',
+      'X-Content-Type-Options': 'nosniff',
+      'Cache-Control': 'private, no-store',
+      'Content-Disposition': `${dispositionType}; filename*=UTF-8''${fname}`,
+    };
+
+    const range = req.headers.range;
+    const size = asset.size;
+    if (range) {
+      const m = /^bytes=(\d*)-(\d*)$/.exec(range);
+      if (m) {
+        let start = m[1] === '' ? undefined : Number(m[1]);
+        let end = m[2] === '' ? undefined : Number(m[2]);
+        // 后缀形式 bytes=-N
+        if (m[1] === '' && m[2] !== '') {
+          start = Math.max(0, size - Number(m[2]));
+          end = size - 1;
+        } else if (m[2] === '') {
+          end = size - 1;
+        }
+        if (!Number.isInteger(start) || !Number.isInteger(end) || start > end || start >= size) {
+          res.writeHead(416, { 'Content-Range': `bytes */${size}` });
+          return res.end();
+        }
+        end = Math.min(end, size - 1);
+        res.writeHead(206, {
+          ...headers,
+          'Content-Range': `bytes ${start}-${end}/${size}`,
+          'Content-Length': end - start + 1,
+        });
+        const stream = storage.openBlob(asset.sha256, { start, end });
+        stream.on('error', () => res.destroy());
+        return stream.pipe(res);
+      }
+    }
+    res.writeHead(200, { ...headers, 'Content-Length': size });
+    const stream = storage.openBlob(asset.sha256);
+    stream.on('error', () => res.destroy());
+    stream.pipe(res);
   }
 
   const httpServer = http.createServer(async (req, res) => {
@@ -320,6 +563,60 @@ function createChatServer(overrides = {}) {
       return json(200, { ok: true, ...hub.stats() });
     }
 
+    // ---------------------------------------------------- 富媒体上传 / 下载
+
+    const upMatch = url.pathname.match(
+      /^\/api\/uploads\/([^/]+)(?:\/(chunks|complete|abort)(?:\/(\d+))?)?\/?$/
+    );
+    if (upMatch) {
+      const user = requireHttpUser(req, res);
+      if (!user) return;
+      const taskId = decodeURIComponent(upMatch[1]);
+      const sub = upMatch[2] || '';
+      try {
+        // PUT /api/uploads/:id/chunks/:idx —— raw 字节流式落盘
+        if (req.method === 'PUT' && sub === 'chunks') {
+          const idx = Number(upMatch[3]);
+          const result = await uploads.putChunk(user, taskId, idx, req, {
+            declaredSha: req.headers['x-chunk-sha256'],
+            contentLength: req.headers['content-length']
+              ? Number(req.headers['content-length']) : null,
+          });
+          return json(200, result);
+        }
+        // GET /api/uploads/:id —— 任务状态 / 续传差集
+        if (req.method === 'GET' && sub === '') {
+          return json(200, await uploads.getTask(user, taskId));
+        }
+        // POST /api/uploads/:id/complete
+        if (req.method === 'POST' && sub === 'complete') {
+          const body = JSON.parse(await readBody(req));
+          return json(200, await uploads.complete(user, taskId, body.sha256));
+        }
+        // POST /api/uploads/:id/abort
+        if (req.method === 'POST' && sub === 'abort') {
+          return json(200, await uploads.abort(user, taskId));
+        }
+      } catch (err) {
+        return sendUploadError(res, err);
+      }
+    }
+
+    if (req.method === 'POST' && url.pathname === '/api/uploads') {
+      const user = requireHttpUser(req, res);
+      if (!user) return;
+      try {
+        const body = JSON.parse(await readBody(req));
+        return json(200, await uploads.createTask(user, body));
+      } catch (err) {
+        return sendUploadError(res, err);
+      }
+    }
+
+    if (req.method === 'GET' && /^\/api\/assets\/[^/]+\/?$/.test(url.pathname)) {
+      return serveAsset(req, res, url);
+    }
+
     if (req.method === 'GET') {
       const rel = url.pathname === '/' ? 'index.html' : url.pathname.slice(1);
       const file = path.resolve(publicDir, rel);
@@ -343,7 +640,8 @@ function createChatServer(overrides = {}) {
 
   // ---------------------------------------------------------------- WS 层
 
-  const wss = new WebSocketServer({ noServer: true });
+  // maxPayload：富媒体字节一律走 HTTP，WS 只承载小的 JSON 控制/消息帧（超限自动 1009）
+  const wss = new WebSocketServer({ noServer: true, maxPayload: config.wsMaxPayload });
 
   httpServer.on('upgrade', (req, socket, head) => {
     const reject = (code, text) => {
@@ -381,11 +679,16 @@ function createChatServer(overrides = {}) {
     setInterval(() => hub.heartbeatSweep(), config.heartbeatIntervalMs),
     setInterval(() => hub.resendSweep(), config.ackResendIntervalMs),
   ];
+  if (config.reapIntervalMs > 0) {
+    timers.push(setInterval(() => { uploads.runReap().catch((e) => console.error('[reap]', e)); },
+      config.reapIntervalMs));
+  }
   for (const t of timers) t.unref();
 
   // ---------------------------------------------------------------- 生命周期
 
-  function start() {
+  async function start() {
+    await uploads.init();
     return new Promise((resolve) => {
       httpServer.listen(config.port, config.host, () => {
         const addr = httpServer.address();
@@ -406,7 +709,7 @@ function createChatServer(overrides = {}) {
     db.close();
   }
 
-  return { config, db, hub, httpServer, wss, start, stop };
+  return { config, db, hub, storage, scanner, uploads, httpServer, wss, start, stop };
 }
 
 // 直接运行：node src/server.js

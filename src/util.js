@@ -43,6 +43,57 @@ function isNonEmptyString(v, maxLen) {
   return typeof v === 'string' && v.length > 0 && v.length <= maxLen;
 }
 
+/** 安全整数且落在区间内 */
+function isInt(v, min = -Infinity, max = Infinity) {
+  return Number.isInteger(v) && v >= min && v <= max;
+}
+
+/** 合法的 64 位十六进制 sha256（小写） */
+function isSha256(v) {
+  return typeof v === 'string' && /^[0-9a-f]{64}$/.test(v);
+}
+
+/** 清洗文件名：去目录部分、去控制字符，只保留纯展示/下载名 */
+function safeFileName(name) {
+  const base = String(name == null ? '' : name).split(/[\\/]/).pop();
+  let out = '';
+  for (const ch of base) {
+    const c = ch.charCodeAt(0);
+    if (c < 0x20 || c === 0x7f) continue;
+    out += ch;
+  }
+  out = out.replace(/^\.+/, '').slice(0, 255);
+  return out || 'file';
+}
+
+/** HMAC 签名通用原语 */
+function hmacSign(secret, payload) {
+  return crypto.createHmac('sha256', secret).update(payload).digest('base64url');
+}
+
+/**
+ * 下载票：`at.<userId>.<assetId>.<expMs>.<hmac>`。
+ * 不与登录 token 互通；服务端恒定时间验签并检查过期。
+ */
+function signAssetTicket(userId, assetId, expMs, secret) {
+  const payload = `${userId}.${assetId}.${expMs}`;
+  return `at.${payload}.${hmacSign(secret, payload)}`;
+}
+
+function verifyAssetTicket(ticket, secret, nowMs = Date.now()) {
+  if (typeof ticket !== 'string') return null;
+  const parts = ticket.split('.');
+  if (parts.length !== 5 || parts[0] !== 'at') return null;
+  const [, userId, assetId, expStr, sig] = parts;
+  const expMs = Number(expStr);
+  if (!Number.isInteger(expMs) || nowMs > expMs) return null;
+  const expect = hmacSign(secret, `${userId}.${assetId}.${expMs}`);
+  const a = Buffer.from(sig);
+  const b = Buffer.from(expect);
+  if (a.length !== b.length || !crypto.timingSafeEqual(a, b)) return null;
+  return { userId, assetId, expMs };
+}
+
 /** 解析 JSON 文本帧，失败返回 null */
 function parseFrame(raw) {
   if (typeof raw !== 'string' && !Buffer.isBuffer(raw)) return null;
@@ -58,4 +109,9 @@ function parseFrame(raw) {
 
 const now = () => Date.now();
 
-module.exports = { randomId, randomSecret, signToken, verifyToken, isNonEmptyString, parseFrame, now };
+module.exports = {
+  randomId, randomSecret, signToken, verifyToken,
+  isNonEmptyString, isInt, isSha256, safeFileName,
+  signAssetTicket, verifyAssetTicket,
+  parseFrame, now,
+};
