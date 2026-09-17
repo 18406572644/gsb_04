@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>可靠聊天室</title>
+<title>可靠聊天室 · 富媒体版</title>
 <style>
   * { box-sizing: border-box; margin: 0; }
   body { font: 14px/1.5 -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif;
@@ -15,6 +15,7 @@
   input, button { font: inherit; padding: 7px 10px; border-radius: 6px; border: 1px solid #2a3550;
                   background: #1c2539; color: inherit; }
   button { cursor: pointer; background: #2f6fed; border-color: #2f6fed; color: #fff; }
+  button.ghost { background: transparent; color: #9fb0d8; border-color: #2a3550; }
   button:disabled { opacity: .5; cursor: default; }
   main { flex: 1; display: flex; min-height: 0; }
   #sidebar { width: 220px; background: #161d2e; padding: 12px; display: flex; flex-direction: column; gap: 8px; }
@@ -23,13 +24,35 @@
   #sidebar .badge { color: #7f8db3; font-size: 12px; }
   #chat { flex: 1; display: flex; flex-direction: column; min-width: 0; }
   #messages { flex: 1; overflow-y: auto; padding: 16px; display: flex; flex-direction: column; gap: 6px; }
-  .msg { max-width: 70%; padding: 8px 12px; border-radius: 10px; background: #1c2539; align-self: flex-start; }
+  .msg { max-width: 70%; padding: 8px 12px; border-radius: 10px; background: #1c2539; align-self: flex-start; position: relative; }
   .msg.mine { background: #2f6fed; align-self: flex-end; }
-  .msg .meta { font-size: 11px; opacity: .65; margin-bottom: 2px; }
+  .msg .meta { font-size: 11px; opacity: .65; margin-bottom: 2px; display: flex; gap: 6px; align-items: center; }
   .msg .tick { font-size: 11px; opacity: .7; }
+  .msg .acts { display: none; gap: 6px; margin-left: auto; }
+  .msg:hover .acts { display: flex; }
+  .msg .acts button { padding: 0 6px; font-size: 11px; background: transparent; border: none; color: inherit; opacity: .7; }
   .sys { align-self: center; font-size: 12px; color: #7f8db3; }
-  #composer { display: flex; gap: 8px; padding: 12px 16px; background: #161d2e; }
-  #composer input { flex: 1; }
+  .media img { max-width: 260px; max-height: 200px; border-radius: 8px; display: block; cursor: pointer; }
+  .filecard { display: flex; align-items: center; gap: 10px; background: rgba(255,255,255,.08); padding: 8px 10px; border-radius: 8px; text-decoration: none; color: inherit; }
+  .filecard .ico { font-size: 22px; }
+  .filecard .fn { font-weight: 600; word-break: break-all; }
+  .filecard .fs { font-size: 11px; opacity: .7; }
+  .voice audio { height: 34px; }
+  .recalled { font-style: italic; opacity: .55; font-size: 12px; }
+  .quote { border-left: 3px solid rgba(255,255,255,.45); padding: 2px 8px; margin-bottom: 4px;
+           font-size: 12px; opacity: .8; background: rgba(255,255,255,.07); border-radius: 0 6px 6px 0; cursor: pointer; }
+  .progress { height: 4px; background: rgba(255,255,255,.2); border-radius: 2px; margin-top: 6px; overflow: hidden; }
+  .progress > i { display: block; height: 100%; width: 0%; background: #8ab4ff; transition: width .15s; }
+  .uploaderr { color: #ff9d9d; font-size: 12px; margin-top: 4px; }
+  #composerBox { background: #161d2e; padding: 10px 16px; display: none; flex-direction: column; gap: 8px; }
+  #composerBox.on { display: flex; }
+  #quoteChip { display: none; align-items: center; gap: 8px; font-size: 12px; background: #1c2539;
+               border: 1px solid #2a3550; border-radius: 6px; padding: 6px 10px; }
+  #quoteChip.on { display: flex; }
+  #quoteChip button { padding: 0 6px; background: none; border: none; color: inherit; }
+  #composer { display: flex; gap: 8px; }
+  #composer input[type=text] { flex: 1; }
+  #composer button.rec { background: #d94848; border-color: #d94848; }
   #members { width: 200px; background: #161d2e; padding: 12px; overflow-y: auto; }
   #members .m { display: flex; align-items: center; gap: 6px; padding: 4px 0; font-size: 13px; }
   #members .dot { width: 8px; height: 8px; border-radius: 50%; background: #555; }
@@ -42,7 +65,7 @@
 </head>
 <body>
 <header>
-  <h1>可靠聊天室</h1>
+  <h1>可靠聊天室 · 富媒体</h1>
   <span id="status" class="off"></span><span id="statusText">未连接</span>
   <span id="who"></span>
 </header>
@@ -58,17 +81,25 @@
         <input id="roomInput" placeholder="房间名" maxlength="64" style="flex:1;min-width:0">
         <button type="submit">建</button>
       </form>
-      <button id="joinBtn">加入房间</button>
+      <button id="joinBtn" class="ghost">加入房间</button>
       <div id="roomList"></div>
     </div>
   </div>
 
   <div id="chat">
     <div id="messages"></div>
-    <form id="composer" class="hidden">
-      <input id="msgInput" placeholder="发送消息…" autocomplete="off">
-      <button type="submit">发送</button>
-    </form>
+    <div id="composerBox">
+      <div id="quoteChip"><span id="quoteText"></span><button id="quoteCancel" type="button">✕</button></div>
+      <form id="composer">
+        <input type="file" id="imgInput" accept="image/*" class="hidden">
+        <input type="file" id="fileInput" class="hidden">
+        <button type="button" class="ghost" id="imgBtn" title="发送图片">🖼</button>
+        <button type="button" class="ghost" id="fileBtn" title="发送文件">📎</button>
+        <button type="button" class="ghost" id="recBtn" title="按住说话（点击开始/停止）">🎤</button>
+        <input id="msgInput" type="text" placeholder="发送消息…" autocomplete="off">
+        <button type="submit">发送</button>
+      </form>
+    </div>
   </div>
 
   <div id="members" class="hidden"></div>
@@ -76,17 +107,19 @@
 
 <script>
 'use strict';
-/* 可靠投递客户端协议实现：
- * - 发送：每条消息带唯一 clientMsgId，未收到 ACK 定时重发（服务端幂等去重）；
- * - 接收：按房间记录 lastSeenSeq，seq 小于等于它的一律丢弃（幂等消费）；
- * - ACK：累积确认，500ms 批量上报；
- * - 断线补发：重连后重新 join 并携带 lastSeenSeq，服务端回放缺口；
- * - lastSeenSeq 存 localStorage，刷新页面也不丢进度。
+/* 客户端协议：
+ * 文本：WS msg{clientMsgId, content, quoteSeq?}（未 ACK 同 ID 重发，服务端幂等）；
+ * 富媒体两阶段：HTTP 分片上传(init→chunks→complete，断点凭 sha256 续传、同内容秒传)
+ *              → 上传完成后 WS media{clientMsgId, assetId, caption?, quoteSeq?} 才落库广播；
+ * 接收按 seq 幂等；累积 ACK；断线重连带 lastSeenSeq 补发；
+ * 撤回 recalled 帧 → 本地置墓碑；文件由服务端按引用规则删除。
  */
 const $ = (id) => document.getElementById(id);
-let ws = null, me = null, currentRoom = null;
+let ws = null, me = null, currentRoom = null, serverCaps = null;
 const rooms = new Map(); // roomId -> {name, role, mutedUntil, lastSeenSeq, msgs:[], pending:Map}
 let reconnectDelay = 500, ackTimer = null, retryTimer = null;
+let quoting = null; // {seq, text}
+let recording = null;
 
 const store = {
   key: () => 'chat:' + me.name,
@@ -98,9 +131,7 @@ const store = {
   },
 };
 
-function setStatus(cls, text) {
-  $('status').className = cls; $('statusText').textContent = text;
-}
+function setStatus(cls, text) { $('status').className = cls; $('statusText').textContent = text; }
 
 async function login(name) {
   const res = await fetch('/api/login', {
@@ -115,7 +146,6 @@ function connect() {
   ws = new WebSocket(`ws://${location.host}/ws?token=${encodeURIComponent(me.token)}`);
   ws.onopen = () => {
     setStatus('on', '已连接'); reconnectDelay = 500;
-    // 重连后恢复所有房间：携带本地进度，服务端补发缺口
     const saved = store.load();
     for (const [roomId, info] of Object.entries(saved)) {
       ws.send(JSON.stringify({ type: 'join', room: roomId, lastSeq: info.lastSeenSeq || 0 }));
@@ -132,9 +162,104 @@ function connect() {
 
 function send(obj) { if (ws && ws.readyState === 1) ws.send(JSON.stringify(obj)); }
 
+// ------------------------------------------------------------- 上传（阶段一）
+
+const api = async (method, url, body) => {
+  const res = await fetch(url, {
+    method,
+    headers: body && !(body instanceof Blob)
+      ? { 'content-type': 'application/json', authorization: `Bearer ${me.token}` }
+      : { authorization: `Bearer ${me.token}` },
+    body: body instanceof Blob ? body : JSON.stringify(body),
+  });
+  const text = await res.text();
+  let json = null;
+  try { json = text ? JSON.parse(text) : {}; } catch { json = { message: text }; }
+  if (!res.ok) throw Object.assign(new Error(json.message || res.statusText), { status: res.status, code: json.error, details: json.details });
+  return json;
+};
+
+function putChunk(taskId, idx, blob) {
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open('PUT', `/api/uploads/${taskId}/chunks/${idx}`);
+    xhr.setRequestHeader('authorization', `Bearer ${me.token}`);
+    xhr.upload.onprogress = (e) => blob._progressCb && blob._progressCb(idx, e.loaded);
+    xhr.onload = () => (xhr.status >= 200 && xhr.status < 300) ? resolve() : reject(new Error(xhr.status));
+    xhr.onerror = () => reject(new Error('network'));
+    xhr.send(blob);
+  });
+}
+
+/**
+ * 两阶段之阶段一。返回 assetId。
+ * - 同内容秒传：init 直接 reused；
+ * - 中断续传：任一分片失败后重新 init，服务端返回 received，只补缺失分片；
+ * - 病毒/超限等错误抛出，由调用方上屏。
+ */
+async function uploadFile(file, kind, onProgress) {
+  const buf = await file.arrayBuffer();
+  const sha = [...new Uint8Array(await crypto.subtle.digest('SHA-256', buf))]
+    .map((b) => b.toString(16).padStart(2, '0')).join('');
+  const mime = file.type || (kind === 'image' ? 'application/octet-stream' : 'application/octet-stream');
+
+  let init = await api('POST', '/api/uploads', {
+    filename: file.name, kind, mime, size: buf.byteLength, sha256: sha,
+    chunkSize: serverCaps?.chunkSize || 1024 * 1024,
+  });
+  if (init.reused) return init.assetId;
+
+  const slice = (i) => file.slice(i * init.chunkSize, Math.min((i + 1) * init.chunkSize, file.size));
+  const done = new Set(init.received || []);
+  const bytesPerChunk = init.chunkSize;
+  const total = init.totalChunks;
+  const sentBytes = new Map(); // idx -> 已传字节（进度用）
+
+  const fireProgress = () => {
+    let bytes = done.size * bytesPerChunk;
+    for (const v of sentBytes.values()) bytes += v;
+    onProgress(Math.min(1, bytes / file.size));
+  };
+
+  for (let attempt = 0; attempt < 6; attempt++) {
+    try {
+      // 并发 3；按缺失列表上传
+      const queue = [];
+      for (let i = 0; i < total; i++) if (!done.has(i)) queue.push(i);
+      let p = 0;
+      const worker = async () => {
+        while (p < queue.length) {
+          const idx = queue[p++];
+          await putChunk(init.taskId, idx, slice(idx));
+          done.add(idx); sentBytes.delete(idx); fireProgress();
+        }
+      };
+      await Promise.all([worker(), worker(), worker()]);
+      const completed = await api('POST', `/api/uploads/${init.taskId}/complete`);
+      onProgress(1);
+      return completed.assetId;
+    } catch (err) {
+      if (err.code === 'MISSING_CHUNKS' || err.details?.missing || /network|^5\d\d$/.test(err.message) || err.status === 0) {
+        // 重新拿权威进度，只补缺失分片（断点续传）
+        init = await api('POST', '/api/uploads', {
+          filename: file.name, kind, mime, size: buf.byteLength, sha256: sha,
+          chunkSize: serverCaps?.chunkSize || 1024 * 1024,
+        });
+        if (init.reused) return init.assetId;
+        for (const i of init.received || []) done.add(i);
+        continue;
+      }
+      throw err; // VIRUS_DETECTED / FILE_TOO_LARGE / UNSUPPORTED_TYPE 等直接上抛
+    }
+  }
+  throw new Error('upload failed after retries');
+}
+
+// ------------------------------------------------------------- 协议处理
+
 function handle(m) {
   switch (m.type) {
-    case 'welcome': break;
+    case 'welcome': serverCaps = m.upload; break;
     case 'joined': {
       const saved = store.load();
       const r = rooms.get(m.roomId) || { msgs: [], pending: new Map(), lastSeenSeq: 0 };
@@ -147,9 +272,8 @@ function handle(m) {
     }
     case 'msg': {
       const r = rooms.get(m.roomId); if (!r) break;
-      if (m.seq <= r.lastSeenSeq) break;          // 幂等消费：重复投递直接丢弃
+      if (m.seq <= r.lastSeenSeq) break;          // 幂等消费
       r.lastSeenSeq = m.seq;
-      // 自己发的消息：广播回包更新乐观插入的占位消息，不重复上屏
       const own = m.clientMsgId ? r.msgs.findIndex((x) => x.clientMsgId === m.clientMsgId) : -1;
       if (own >= 0) {
         r.msgs[own] = { ...m, mine: true, pending: false };
@@ -158,17 +282,25 @@ function handle(m) {
         r.msgs.push({ ...m, mine: m.from === me.userId });
       }
       if (r.msgs.length > 500) r.msgs.splice(0, r.msgs.length - 500);
-      store.save(); scheduleAck();
-      render();
+      store.save(); scheduleAck(); render();
       break;
     }
-    case 'ack': {                                  // 服务端确认我发的消息（含分配的 seq）
+    case 'ack': {
       const r = rooms.get(m.roomId); if (!r) break;
       const p = r.pending.get(m.clientMsgId);
       if (p) p.acked = true;
       const own = r.msgs.find((x) => x.clientMsgId === m.clientMsgId);
       if (own) { own.pending = false; own.seq = m.seq; }
       render();
+      break;
+    }
+    case 'recalled': {
+      const r = rooms.get(m.roomId); if (!r) break;
+      const t = r.msgs.find((x) => x.seq === m.seq);
+      if (t && !t.recalled) {
+        t.recalled = true; t.content = ''; t.asset = null; t.quote = null;
+        render();
+      }
       break;
     }
     case 'sync_done':
@@ -202,24 +334,80 @@ function scheduleAck() {
 function refreshMembers() { if (currentRoom) send({ type: 'members', roomId: currentRoom }); }
 setInterval(refreshMembers, 5000);
 
-// 未 ACK 的消息每秒重发一次（clientMsgId 不变，服务端幂等）
+// 未 ACK 帧每秒重发一次（clientMsgId 不变，服务端幂等）
 retryTimer = setInterval(() => {
-  for (const [roomId, r] of rooms) {
+  for (const [, r] of rooms) {
     for (const [cid, p] of r.pending) {
-      if (!p.acked && Date.now() - p.sentAt > 1000) {
+      if (!p.acked && Date.now() - p.sentAt > 1500) {
         p.sentAt = Date.now();
-        send({ type: 'msg', roomId, clientMsgId: cid, content: p.content });
+        send(p.frame);
       }
     }
   }
 }, 1000);
 
 function sys(roomId, text) {
-  const r = rooms.get(roomId); if (!r) return;
+  const r = rooms.get(roomId); if (!roomId || !r) return;
   r.msgs.push({ sys: text }); render();
 }
 
+// ------------------------------------------------------------- 发送
+
+function sendText(content) {
+  const cid = crypto.randomUUID();
+  const quote = quoting ? quoting.quote : null;
+  const frame = { type: 'msg', roomId: currentRoom, clientMsgId: cid, content };
+  if (quoting) { frame.quoteSeq = quoting.seq; quoting = null; renderQuoteChip(); }
+  const r = rooms.get(currentRoom);
+  r.pending.set(cid, { frame, sentAt: Date.now(), acked: false });
+  r.msgs.push({ mine: true, fromName: me.name, content, seq: '…', msgType: 'text',
+                pending: true, clientMsgId: cid, quote });
+  send(frame); render();
+}
+
+/** 发送媒体：先乐观插入（带进度条），走完两阶段后替换为正式消息 */
+async function sendMedia(file, kind) {
+  const r = rooms.get(currentRoom);
+  const cid = crypto.randomUUID();
+  const quote = quoting ? quoting.quote : null;
+  const quoteSeq = quoting ? quoting.seq : null;
+  if (quoting) { quoting = null; renderQuoteChip(); }
+  const opt = {
+    mine: true, fromName: me.name, seq: '…', msgType: kind, pending: true, clientMsgId: cid,
+    content: kind === 'image' ? '' : file.name, uploading: true, progress: 0,
+    localUrl: kind === 'image' || kind === 'voice' ? URL.createObjectURL(file) : null,
+    localName: file.name, localSize: file.size, localMime: file.type,
+    quote,
+  };
+  r.msgs.push(opt); render();
+  try {
+    const assetId = await uploadFile(file, kind, (p) => { opt.progress = p; updateProgressDom(cid, p); });
+    const frame = { type: 'media', roomId: currentRoom, clientMsgId: cid, assetId, quoteSeq };
+    r.pending.set(cid, { frame, sentAt: Date.now(), acked: false });
+    opt.uploading = false; opt.progress = 1;
+    opt.asset = { id: assetId, name: file.name, size: file.size, mime: file.type, kind };
+    send(frame); render();
+  } catch (err) {
+    opt.uploading = false; opt.failed = true; opt.error = err.code || err.message;
+    r.pending.delete(cid);
+    render();
+  }
+}
+
+// ------------------------------------------------------------- 渲染
+
+function mediaUrl(assetId) {
+  return `/api/assets/${assetId}/download?token=${encodeURIComponent(me.token)}`;
+}
+
+function fmtSize(n) {
+  if (n < 1024) return `${n} B`;
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
+  return `${(n / 1024 / 1024).toFixed(1)} MB`;
+}
+
 function renderRooms() {
+  $('composerBox').classList.toggle('on', !!rooms.get(currentRoom));
   $('roomList').innerHTML = [...rooms].map(([id, r]) =>
     `<div class="room ${id === currentRoom ? 'active' : ''}" data-id="${id}">
        <span>${escapeHtml(r.name || id)}</span>
@@ -230,26 +418,96 @@ function renderRooms() {
   }
 }
 
+function quotePreview(q) {
+  if (!q) return '';
+  if (q.gone || q.recalled) return `#${q.seq} 原消息不可见`;
+  const type = { image: '[图片]', file: '[文件]', voice: '[语音]' }[q.msgType] || '';
+  return `#${q.seq} ${escapeHtml(q.fromName || '')}: ${type ? type + ' ' : ''}${escapeHtml(q.content || '')}`.slice(0, 80);
+}
+
 function render() {
   const r = rooms.get(currentRoom);
-  $('composer').classList.toggle('hidden', !r);
+  $('composerBox').classList.toggle('on', !!r);
   $('members').classList.toggle('hidden', !r);
-  if (!r) return;
+  if (!r) { $('messages').innerHTML = ''; return; }
   const box = $('messages');
-  box.innerHTML = r.msgs.map((m) => {
+  box.innerHTML = r.msgs.map((m, idx) => {
     if (m.sys) return `<div class="sys">${escapeHtml(m.sys)}</div>`;
     const tick = m.mine ? `<span class="tick">${m.pending ? '…' : '✓'}</span>` : '';
+    const acts = m.mine && !m.recalled && !m.uploading
+      ? `<span class="acts"><button data-act="quote" data-idx="${idx}">引用</button>
+         <button data-act="recall" data-idx="${idx}">撤回</button></span>`
+      : (m.mine || !m.recalled ? `<span class="acts"><button data-act="quote" data-idx="${idx}">引用</button></span>` : '');
+    const quote = m.quote ? `<div class="quote" data-jump="${m.quote.seq}">${quotePreview(m.quote)}</div>` : '';
+    let body;
+    if (m.recalled) body = `<div class="recalled">该消息已撤回</div>`;
+    else if (m.uploading) body = renderUploading(m);
+    else if (m.failed) body = `<div>${escapeHtml(m.localName || '')}<div class="uploaderr">发送失败：${escapeHtml(m.error || '')}</div></div>`;
+    else body = renderMedia(m);
     return `<div class="msg ${m.mine ? 'mine' : ''}">
-      <div class="meta">${escapeHtml(m.fromName || '')} · #${m.seq} ${tick}</div>
-      <div>${escapeHtml(m.content)}</div></div>`;
+      <div class="meta">${escapeHtml(m.fromName || '')} · #${m.seq} ${tick}${acts}</div>
+      ${quote}${body}</div>`;
   }).join('');
   box.scrollTop = box.scrollHeight;
+
+  box.querySelectorAll('button[data-act]').forEach((b) => {
+    b.onclick = () => {
+      const m = r.msgs[Number(b.dataset.idx)];
+      if (b.dataset.act === 'quote') {
+        quoting = { seq: m.seq, quote: { seq: m.seq, fromName: m.fromName, msgType: m.msgType, content: m.content } };
+        renderQuoteChip();
+      }
+      else if (b.dataset.act === 'recall') send({ type: 'recall', roomId: currentRoom, seq: m.seq });
+    };
+  });
+  box.querySelectorAll('.quote[data-jump]').forEach((el) => {
+    el.onclick = () => {
+      const target = r.msgs.find((x) => x.seq === Number(el.dataset.jump));
+      if (target) sys(currentRoom, `跳转到 #${target.seq}`); // 演示：历史过短时可能已不在内存
+    };
+  });
+
   const muted = r.mutedUntil > Date.now();
   $('msgInput').placeholder = muted ? `你已被禁言至 ${new Date(r.mutedUntil).toLocaleTimeString()}` : '发送消息…';
   $('msgInput').disabled = muted;
 }
 
-// 把 members 响应接进渲染
+function renderUploading(m) {
+  const label = { image: '🖼 图片', voice: '🎤 语音', file: '📎 文件' }[m.msgType] || '文件';
+  return `<div>${label} ${escapeHtml(m.localName || '')} <span class="fs">${fmtSize(m.localSize || 0)}</span>
+    <div class="progress"><i style="width:${Math.round((m.progress || 0) * 100)}%"></i></div></div>`;
+}
+
+function updateProgressDom(cid, p) {
+  const r = rooms.get(currentRoom); if (!r) return;
+  const bar = $('messages').querySelector('.progress > i');
+  if (bar) bar.style.width = `${Math.round(p * 100)}%`;
+}
+
+function renderMedia(m) {
+  if (m.msgType === 'text' || !m.msgType) return `<div>${escapeHtml(m.content || '')}</div>`;
+  const a = m.asset;
+  if (!a || a.gone) return `<div class="recalled">[资源不可用]</div>`;
+  const url = mediaUrl(a.id);
+  if (a.kind === 'image') {
+    const cap = m.content ? `<div>${escapeHtml(m.content)}</div>` : '';
+    return `<div class="media"><a href="${url}" target="_blank"><img src="${url}" loading="lazy" alt="${escapeHtml(a.name)}"></a>${cap}</div>`;
+  }
+  if (a.kind === 'voice') {
+    return `<div class="voice"><audio controls preload="none" src="${url}"></audio></div>`;
+  }
+  return `<a class="filecard" href="${url}" download="${escapeHtml(a.name)}">
+    <span class="ico">📄</span>
+    <span><span class="fn">${escapeHtml(a.name)}</span><br><span class="fs">${fmtSize(a.size)}</span></span>
+  </a>`;
+}
+
+function renderQuoteChip() {
+  const chip = $('quoteChip');
+  if (quoting) { $('quoteText').textContent = `引用 ${quotePreview(quoting.quote)}`; chip.classList.add('on'); }
+  else chip.classList.remove('on');
+}
+
 function renderMembers(list) {
   const r = rooms.get(currentRoom); if (!r) return;
   $('members').innerHTML = '<b>成员</b>' + list.map((m) => {
@@ -276,16 +534,15 @@ function renderMembers(list) {
 }
 
 function escapeHtml(s) {
-  return String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  return String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 }
 
-// ---------------------------------------------------------------- 事件绑定
+// ------------------------------------------------------------- 事件绑定
 
 $('loginForm').onsubmit = async (e) => {
   e.preventDefault();
   const name = $('nameInput').value.trim(); if (!name) return;
   me = await login(name);
-  // 恢复房间进度
   const saved = store.load();
   for (const [id, info] of Object.entries(saved)) {
     rooms.set(id, { name: info.name, msgs: [], pending: new Map(), lastSeenSeq: info.lastSeenSeq || 0 });
@@ -310,14 +567,45 @@ $('joinBtn').onclick = () => {
 
 $('composer').onsubmit = (e) => {
   e.preventDefault();
-  const content = $('msgInput').value.trim(); if (!content || !currentRoom) return;
-  const cid = crypto.randomUUID();
-  const r = rooms.get(currentRoom);
-  r.pending.set(cid, { content, sentAt: Date.now(), acked: false });
-  r.msgs.push({ mine: true, fromName: me.name, content, seq: '…', pending: true, clientMsgId: cid });
-  send({ type: 'msg', roomId: currentRoom, clientMsgId: cid, content });
+  const content = $('msgInput').value.trim();
+  if (content && currentRoom) sendText(content);
   $('msgInput').value = '';
-  render();
+};
+$('quoteCancel').onclick = () => { quoting = null; renderQuoteChip(); };
+
+$('imgBtn').onclick = () => $('imgInput').click();
+$('fileBtn').onclick = () => $('fileInput').click();
+$('imgInput').onchange = async (e) => {
+  const f = e.target.files[0]; e.target.value = '';
+  if (f && currentRoom) sendMedia(f, 'image');
+};
+$('fileInput').onchange = async (e) => {
+  const f = e.target.files[0]; e.target.value = '';
+  if (f && currentRoom) sendMedia(f, 'file');
+};
+
+// 语音：点击开始 / 再点停止并发送（MediaRecorder，演示级）
+$('recBtn').onclick = async () => {
+  if (!recording) {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const rec = new MediaRecorder(stream);
+      const parts = [];
+      rec.ondataavailable = (e) => e.data.size && parts.push(e.data);
+      rec.onstop = () => {
+        stream.getTracks().forEach((t) => t.stop());
+        const blob = new File(parts, `voice-${new Date().toISOString().slice(11, 19)}.webm`, { type: rec.mimeType || 'audio/webm' });
+        if (currentRoom) sendMedia(blob, 'voice');
+        recording = null; $('recBtn').classList.remove('rec'); $('recBtn').textContent = '🎤';
+      };
+      rec.start();
+      recording = rec; $('recBtn').classList.add('rec'); $('recBtn').textContent = '⏹';
+    } catch {
+      sys(currentRoom, '无法访问麦克风');
+    }
+  } else {
+    recording.stop();
+  }
 };
 </script>
 </body>

@@ -29,8 +29,8 @@ class Connection {
       room = new Map();
       this.unacked.set(roomId, room);
     }
+    if (!room.has(seq)) this.unackedCount++; // 同 seq 重发/撤回帧只替换内容，不重复计数
     room.set(seq, { frame, lastSent: now(), tries: 0 });
-    this.unackedCount++;
   }
 
   /** 累积 ACK：清除 roomId 下所有 seq <= ackSeq 的未确认项，返回新确认的数量 */
